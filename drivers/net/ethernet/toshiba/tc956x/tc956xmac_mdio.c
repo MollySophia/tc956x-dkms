@@ -793,7 +793,7 @@ int tc956xmac_mdio_register(struct net_device *ndev)
 				phy_id = ((phy_reg_read1 << 16) | phy_reg_read2);
 				if (phy_id != 0x00000000 && phy_id != 0xffffffff) {
 					NMSGPR_INFO(priv->device,
-							"TC956X: [2] Phy detected C45 at ID/ADDR %d\n", addr);
+							"TC956X: [2] Phy detected C45 at ID/ADDR %d (phy_id = 0x%x)\n", addr, phy_id);
 
 #else
 					struct phy_device *phydev = mdiobus_get_phy(new_bus, addr);

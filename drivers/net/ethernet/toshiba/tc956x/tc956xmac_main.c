@@ -207,6 +207,7 @@
 #include <linux/slab.h>
 #include <linux/prefetch.h>
 #include <linux/pinctrl/consumer.h>
+#include <linux/kmod.h>
 #ifdef TC956X_SRIOV_PF
 #ifdef CONFIG_DEBUG_FS
 #include <linux/debugfs.h>
@@ -4667,6 +4668,90 @@ static int tc956xmac_init_phy(struct net_device *dev)
 		netdev_err(priv->dev, "%s no phy at addr %d, exit init phy\n", __func__, addr);
 		return -ENODEV;
 	}
+
+	/* Workaround for PHY driver loading timing issue:
+	 * On first boot after power-on, PHY-specific driver modules may not be loaded yet.
+	 * When phydev->drv is NULL, actively request the module and trigger probe.
+	 * This prevents falling back to Generic PHY driver.
+	 */
+	if (!phydev->drv) {
+		int retry, i;
+		char modalias[48];
+		u32 phy_id;
+		int id1, id2;
+
+		/* For C45 PHYs, phydev->phy_id might be incomplete, read directly from PHY */
+		if (phydev->is_c45 || priv->plat->c45_needed) {
+			/* Read C45 PHY ID registers directly using MDIO bus methods */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+			id1 = priv->mii->read(priv->mii, addr,
+					      ((PHY_CL45_PHYID1_REG) | MII_ADDR_C45));
+			id2 = priv->mii->read(priv->mii, addr,
+					      ((PHY_CL45_PHYID2_REG) | MII_ADDR_C45));
+#else
+			id1 = priv->mii->read_c45(priv->mii, addr,
+						  PHY_CL45_PHYID1_MMD_BANK, PHY_CL45_PHYID1_ADDR);
+			id2 = priv->mii->read_c45(priv->mii, addr,
+						  PHY_CL45_PHYID2_MMD_BANK, PHY_CL45_PHYID2_ADDR);
+#endif
+			if (id1 >= 0 && id2 >= 0) {
+				phy_id = (id1 << 16) | id2;
+				/* Update phydev->phy_id with correct value */
+				phydev->phy_id = phy_id;
+			} else {
+				phy_id = phydev->phy_id;
+			}
+		} else {
+			phy_id = phydev->phy_id;
+		}
+
+		if (phy_id == 0 || phy_id == 0xFFFFFFFF) {
+			goto skip_module_load;
+		}
+
+		netdev_info(priv->dev, "PHY (0x%08x) driver not bound yet, requesting module load...\n",
+			    phy_id);
+
+		/* Request PHY driver module using MDIO modalias format
+		 * Format: "mdio:" followed by 32 chars of '0', '1', or '?'
+		 * Each bit of PHY ID is represented as '0' or '1'
+		 * We match vendor ID (upper 24 bits) and wildcard the rest
+		 */
+		strcpy(modalias, "mdio:");
+		for (i = 0; i < 32; i++) {
+			if (i < 24) {
+				/* Match vendor ID bits exactly */
+				modalias[5 + i] = (phy_id & (1U << (31 - i))) ? '1' : '0';
+			} else {
+				/* Wildcard for model/revision bits */
+				modalias[5 + i] = '?';
+			}
+		}
+		modalias[37] = '\0';
+
+		netdev_info(priv->dev, "Requesting PHY module with modalias: %s\n", modalias);
+		request_module(modalias);
+
+		/* Wait for module to load and bind */
+		for (retry = 0; retry < 10; retry++) {
+			msleep(50);
+
+			/* Trigger device reprobe to match with newly loaded driver */
+			device_reprobe(&phydev->mdio.dev);
+			
+			if (phydev->drv) {
+				netdev_info(priv->dev, "PHY driver successfully bound: %s\n", 
+					    phydev->drv->name);
+				break;
+			}
+		}
+
+		if (!phydev->drv) {
+			netdev_warn(priv->dev, "PHY driver could not be loaded for ID 0x%08x, will use Generic PHY\n",
+				    phy_id);
+		}
+	}
+skip_module_load:
 	if (phydev->drv != NULL) {
 		if (true == priv->plat->phy_interrupt_mode && (phydev->drv->config_intr)) {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
@@ -4716,6 +4801,45 @@ static int tc956xmac_init_phy(struct net_device *dev)
 		ret = phylink_connect_phy(priv->phylink, phydev);
 
 		phy_attached_info(phydev);
+
+		/* Workaround for AS21xxx PHY: manually set supported modes
+		 * The PHY driver doesn't provide get_features callback, causing
+		 * incorrect supported link modes to be reported.
+		 */
+		pr_info("%s: phydev->drv->name: %s\n", __func__, phydev->drv->name);
+		if (phydev->drv && strstr(phydev->drv->name, "AS21")) {
+			__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+
+			pr_info("%s: Detected AS21xxx PHY (%s), manually setting supported modes\n",
+				dev->name, phydev->drv->name);
+
+			/* Set all supported modes for AS21xxx (10G/5G/2.5G/1G/100M/10M) */
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Half_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10baseT_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Half_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_100baseT_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Half_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_1000baseT_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_2500baseX_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_5000baseT_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseT_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseSR_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseLR_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseER_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseLRM_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_10000baseKR_Full_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_TP_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_MII_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, mask);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, mask);
+
+			linkmode_copy(phydev->supported, mask);
+			linkmode_copy(phydev->advertising, mask);
+			
+			pr_info("%s: AS21xxx PHY supported modes updated\n", dev->name);
+		}
 	}
 
 	if (phydev->drv != NULL) {
