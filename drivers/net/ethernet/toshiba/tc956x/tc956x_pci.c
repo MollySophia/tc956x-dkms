@@ -3084,6 +3084,7 @@ static int tc956xmac_pci_probe(struct pci_dev *pdev,
 
 		// macX_interface[res.device_num]					= ENABLE_SGMII_INTERFACE;
 
+		// macX_interface[res.device_num]					= ENABLE_XFI_INTERFACE;
 		macX_interface[res.device_num]					= ENABLE_USXGMII_10G_INTERFACE;
 		portX_mdc[res.device_num]						= 0xFF;
 		// portX_c45_state[res.device_num]					= 0xFF;
