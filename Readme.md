@@ -96,6 +96,8 @@ TC956X PCIe EMAC driver is based on "Fedora 30, kernel-5.4.19", "Fedora 36, kern
 
     **Notes:**
     1.  Providing an array of BDFs in the module param `tc956x_eth_ports_bdf` along with `macX_interface` is mandatory to associate a TC956x's MAC port for the correct MAC interface.
+    1a. If bus numbers are not stable across platforms, you can enable **probe-order mode** by setting `tc956x_eth_ports_bdf=0xFFFF`. In this mode, TC956x ports are indexed based on driver probe order instead of BDF matching.
+        *   You may pass a single `macX_interface=<x>` value; the driver will apply it as the default interface for all probed devices (unless overridden by per-index values).
     2.  If `tc956x_eth_ports_bdf` is not provided, the software will take the following interface for all TC956x's devices in a TC956x's DSP cascade setup or more than one TC956x connection in a system.
         *   Port0: XFI
         *   Port1: SGMII

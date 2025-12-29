@@ -3075,6 +3075,20 @@ static int tc956xmac_pci_probe(struct pci_dev *pdev,
 	res.device_num = get_tc956x_index(pdev);
 	dev_info(&(pdev->dev), "tc956x_eth_ports_bdf matched device index for this device is: %d and Port number: %d\n", res.device_num, res.port_num);
 
+	/*
+	 * Convenience for probe-order mode:
+	 * Allow users to pass a single macX_interface=<val> and apply it to all
+	 * probed devices when tc956x_eth_ports_bdf[0] == 0xFFFF.
+	 *
+	 * macX_interface[] defaults to 0xFF; if per-index value isn't provided,
+	 * copy index 0 as the global default.
+	 */
+	if ((tc956x_eth_ports_bdf[0] == 0xFFFF) &&
+	    (res.device_num <= (TC956X_TOT_CASCADE_DEV * 2)) &&
+	    (macX_interface[0] != 0xFF) &&
+	    (macX_interface[res.device_num] == 0xFF))
+		macX_interface[res.device_num] = macX_interface[0];
+
 	if (res.device_num == 0xFF) {
 		res.device_num = (TC956X_TOT_CASCADE_DEV*2); /* Use the slot at the end of array for non-matching devices */
 
