@@ -3082,13 +3082,13 @@ static int tc956xmac_pci_probe(struct pci_dev *pdev,
 			value provided in module param not matching with the device BDF.\
 			Use the device number as %d and set other associated module parameter values to default\n", res.device_num);
 
-		// macX_interface[res.device_num]					= ENABLE_SGMII_INTERFACE;
 
-		// macX_interface[res.device_num]					= ENABLE_XFI_INTERFACE;
-		macX_interface[res.device_num]					= ENABLE_USXGMII_10G_INTERFACE;
+		// macX_interface[res.device_num]					= ENABLE_USXGMII_10G_INTERFACE;
+		// portX_c45_state[res.device_num]					= 1;
+
+		macX_interface[res.device_num]					= ENABLE_SGMII_INTERFACE;
+		portX_c45_state[res.device_num]					= 0xFF;
 		portX_mdc[res.device_num]						= 0xFF;
-		// portX_c45_state[res.device_num]					= 0xFF;
-		portX_c45_state[res.device_num]					= 1;
 		portX_phyaddr[res.device_num]					= 0;
 		macX_link_down_macrst[res.device_num]			= 0xFF;
 		macX_no_mdio_no_phy[res.device_num]				= PHY_ON_MDIO_ON;
